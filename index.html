@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UR15 Robot - Forward Kinematics</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: linear-gradient(135deg, #444850 0%, #2a2d32 100%); font-family: monospace; color: #f0f0f0; }
+        canvas { display: block; }
+        .panel { position: absolute; top: 15px; background: rgba(25, 25, 25, 0.85); backdrop-filter: blur(10px); border-radius: 8px; border: 1px solid rgba(128, 128, 128, 0.3); padding: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 101; user-select: none; }
+        #scene-graph { left: 15px; width: 300px; max-height: calc(100vh - 30px); overflow-y: auto; }
+        #control-panel { right: 15px; width: 300px; }
+        .panel h3 { margin: 0 0 10px 0; color: #66d9ef; text-align: center; }
+        .node { padding-left: 5px; }
+        .node-name { color: #a6e22e; }
+        .node-type { color: #f92672; font-size: 10px; margin-left: 5px; }
+        .control-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 12px; }
+        .control-row label { flex-basis: 30%; }
+        input[type="range"] { flex-grow: 1; margin: 0 10px; }
+        .slider-value { min-width: 40px; text-align: right; color: #f92672; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div id="container"></div>
+    <div id="scene-graph" class="panel">
+        <h3>Joint Structure</h3>
+        <div id="scene-graph-content">Loading...</div>
+    </div>
+    <div id="control-panel" class="panel">
+        <h3>Forward Kinematics</h3>
+        <div id="fk-controls-container"></div>
+    </div>
+
+    <script type="importmap">
+        { "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+        } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        let scene, camera, renderer, controls;
+        const sceneGraphContent = document.getElementById('scene-graph-content');
+        
+        const allJointNames = ['BASE', 'SHOULDER', 'ELBOW', 'WRIST1', 'WRIST2', 'WRIST3', 'TOOLFLANGE'];
+        let orderedJoints = [];
+        let controllableJoints = [];
+        const fk_angles = [0, 0, 0, 0, 0, 0];
+
+        init();
+        animate();
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(3, 1.5, 3);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setClearColor(0x000000, 0);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            document.getElementById('container').appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.target.set(0, 0.8, 0);
+
+            scene.add(new THREE.GridHelper(3, 10, 0x888888, 0x444444));
+            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+            dirLight.position.set(5, 10, 7.5);
+            scene.add(dirLight);
+
+            loadModel();
+        }
+
+        function loadModel() {
+            const loader = new GLTFLoader();
+            loader.load('3dmodels/UR15.gltf', (gltf) => {
+                const robotRoot = gltf.scene;
+                scene.add(robotRoot);
+                let foundJoints = [];
+                robotRoot.traverse((object) => {
+                    if (object.isGroup && allJointNames.includes(object.name)) {
+                        foundJoints.push(object);
+                    }
+                });
+                orderedJoints = foundJoints.sort((a, b) => allJointNames.indexOf(a.name) - allJointNames.indexOf(b.name));
+
+                const controllableNames = ['SHOULDER', 'ELBOW', 'WRIST1', 'WRIST2', 'WRIST3', 'TOOLFLANGE'];
+                controllableJoints = orderedJoints.filter(joint => controllableNames.includes(joint.name));
+
+                if (orderedJoints.length >= 7) {
+                    orderedJoints.forEach(joint => joint.add(new THREE.AxesHelper(0.2)));
+                } else {
+                    console.error("Could not find all 7 required robot joints.");
+                }
+                
+                setupFKControls();
+                frameCamera(robotRoot);
+                updateSceneGraph(robotRoot);
+            });
+        }
+
+        function setupFKControls() {
+            const container = document.getElementById('fk-controls-container');
+            if (controllableJoints.length !== 6) {
+                container.textContent = "Error: Could not find the 6 controllable joints.";
+                return;
+            }
+
+            controllableJoints.forEach((joint, i) => {
+                const row = document.createElement('div');
+                row.className = 'control-row';
+                const label = document.createElement('label');
+                label.textContent = `Joint ${i + 1}`;
+                const slider = document.createElement('input');
+                slider.type = 'range';
+                slider.min = -Math.PI;
+                slider.max = Math.PI;
+                slider.step = 0.01;
+                slider.value = 0;
+                const valueDisplay = document.createElement('span');
+                valueDisplay.className = 'slider-value';
+                valueDisplay.textContent = '0.0°';
+                
+                slider.addEventListener('input', (event) => {
+                    const angleRad = parseFloat(event.target.value);
+                    fk_angles[i] = angleRad;
+                    valueDisplay.textContent = `${THREE.MathUtils.radToDeg(angleRad).toFixed(1)}°`;
+                });
+
+                row.appendChild(label);
+                row.appendChild(slider);
+                row.appendChild(valueDisplay);
+                container.appendChild(row);
+            });
+        }
+
+        // ✨ --- Updated rotation logic --- ✨
+        function applyJointRotations() {
+            if (controllableJoints.length !== 6) return;
+
+            controllableJoints.forEach((joint, i) => {
+                const angle = fk_angles[i]; // Get the dynamic angle from the slider
+
+                // Start with the static (initial) rotations needed to orient the parts
+                let x = 0, y = 0, z = 0;
+                switch (joint.name) {
+                    case 'SHOULDER': x = Math.PI / 2; break;
+                    case 'WRIST2':   x = Math.PI / 2; break;
+                    case 'WRIST3':   x = -Math.PI / 2; break;
+                }
+                
+                // Now, add the slider's angle to the correct axis based on your request
+                switch (joint.name) {
+                    // Joint 1 (SHOULDER) and 5 (WRIST3) rotate on Y
+                    case 'SHOULDER':
+                    case 'WRIST3':
+                        y = angle;
+                        break;
+
+                    // Joints 2, 3, 4, 6 rotate on X
+                    case 'ELBOW':
+                    case 'WRIST1':
+                    case 'WRIST2':
+                    case 'TOOLFLANGE':
+                        x += angle; // Add the slider angle to the existing X rotation
+                        break;
+                }
+                
+                joint.rotation.set(x, y, z);
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            applyJointRotations();
+            renderer.render(scene, camera);
+        }
+
+        function frameCamera(targetObject) {
+            const box = new THREE.Box3().setFromObject(targetObject);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = camera.fov * (Math.PI / 180);
+            const cameraDistance = Math.abs(maxDim / Math.sin(fov / 2)) * 1.5;
+            camera.position.set(center.x + cameraDistance, center.y + cameraDistance * 0.75, center.z + cameraDistance);
+            camera.lookAt(center);
+            controls.target.copy(center);
+        }
+        
+        function updateSceneGraph(object, indent = 0) {
+            if (indent === 0) sceneGraphContent.innerHTML = '';
+            if (object.isGroup) {
+                const nodeDiv = document.createElement('div');
+                nodeDiv.className = 'node';
+                nodeDiv.style.marginLeft = `${indent * 15}px`;
+                nodeDiv.innerHTML = `<span class="node-name">${object.name}</span> <span class="node-type">(Group)</span>`;
+                sceneGraphContent.appendChild(nodeDiv);
+            }
+            const nextIndent = object.isGroup ? indent + 1 : indent;
+            object.children.forEach(child => updateSceneGraph(child, nextIndent));
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
