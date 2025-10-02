@@ -10,7 +10,6 @@
         .panel { position: absolute; top: 15px; background: rgba(25, 25, 25, 0.85); backdrop-filter: blur(10px); border-radius: 8px; border: 1px solid rgba(128, 128, 128, 0.3); padding: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); z-index: 101; user-select: none; }
         #scene-graph { left: 15px; width: 300px; max-height: calc(100vh - 30px); overflow-y: auto; }
         #control-panel { right: 15px; width: 300px; }
-        #kinematic-info { bottom: 15px; left: 15px; width: 615px; }
         .panel h3 { margin: 0 0 10px 0; color: #66d9ef; text-align: center; }
         .node { padding-left: 5px; }
         .node-name { color: #a6e22e; }
@@ -30,11 +29,6 @@
     <div id="control-panel" class="panel">
         <h3>Forward Kinematics</h3>
         <div id="fk-controls-container"></div>
-    </div>
-
-    <div id="kinematic-info" class="panel">
-        <h3>Kinematic Information</h3>
-        <div id="kinematic-info-content" style="padding-top: 5px;">Loading...</div>
     </div>
 
     <script type="importmap">
@@ -108,71 +102,9 @@
                 }
                 
                 setupFKControls();
-                displayKinematicInfo(); // ✨ New function call
                 frameCamera(robotRoot);
                 updateSceneGraph(robotRoot);
             });
-        }
-
-        function displayKinematicInfo() {
-            const container = document.getElementById('kinematic-info-content');
-            if (orderedJoints.length < 7) {
-                container.innerHTML = "Error: Not all joints found.";
-                return;
-            }
-
-            // Create a more structured and styled table for the info
-            let html = `
-                <style>
-                    .kinematic-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-                    .kinematic-table th, .kinematic-table td { padding: 4px 6px; border: 1px solid #444; text-align: left; }
-                    .kinematic-table th { background-color: #333; color: #66d9ef; }
-                    .kinematic-table tr:nth-child(even) { background-color: #2f2f2f; }
-                    .kinematic-table .joint-name { color: #a6e22e; }
-                    .kinematic-table .parent-name { color: #e6db74; }
-                    .kinematic-table .axis { color: #f92672; text-align: center; font-weight: bold; }
-                    .kinematic-table .pos-val { color: #ae81ff; }
-                </style>
-                <table class="kinematic-table">
-                    <tr><th>Joint</th><th>Parent</th><th>Rotation Axis</th><th>Relative Position (x, y, z)</th></tr>
-            `;
-
-            orderedJoints.forEach(joint => {
-                const parentName = joint.parent ? joint.parent.name : 'Scene';
-                const pos = joint.position;
-                const posString = `
-                    <span class="pos-val">${pos.x.toFixed(3)}</span>,
-                    <span class="pos-val">${pos.y.toFixed(3)}</span>,
-                    <span class="pos-val">${pos.z.toFixed(3)}</span>`;
-
-                // Determine rotation axis based on the logic in applyJointRotations
-                let rotationAxis = 'Static'; // Default for BASE and non-controllable
-                if (controllableJoints.includes(joint)) {
-                    switch (joint.name) {
-                        case 'SHOULDER':
-                        case 'WRIST3':
-                            rotationAxis = 'Y';
-                            break;
-                        case 'ELBOW':
-                        case 'WRIST1':
-                        case 'WRIST2':
-                        case 'TOOLFLANGE':
-                            rotationAxis = 'X';
-                            break;
-                    }
-                }
-
-                html += `
-                    <tr>
-                        <td class="joint-name">${joint.name}</td>
-                        <td class="parent-name">${parentName}</td>
-                        <td class="axis">${rotationAxis}</td>
-                        <td>(${posString})</td>
-                    </tr>`;
-            });
-
-            html += '</table>';
-            container.innerHTML = html;
         }
 
         function setupFKControls() {
@@ -210,14 +142,12 @@
             });
         }
 
-        // ✨ --- Updated rotation logic --- ✨
         function applyJointRotations() {
             if (controllableJoints.length !== 6) return;
 
             controllableJoints.forEach((joint, i) => {
-                const angle = fk_angles[i]; // Get the dynamic angle from the slider
+                const angle = fk_angles[i];
 
-                // Start with the static (initial) rotations needed to orient the parts
                 let x = 0, y = 0, z = 0;
                 switch (joint.name) {
                     case 'SHOULDER': x = Math.PI / 2; break;
@@ -225,20 +155,17 @@
                     case 'WRIST3':   x = -Math.PI / 2; break;
                 }
                 
-                // Now, add the slider's angle to the correct axis based on your request
                 switch (joint.name) {
-                    // Joint 1 (SHOULDER) and 5 (WRIST3) rotate on Y
                     case 'SHOULDER':
                     case 'WRIST3':
                         y = angle;
                         break;
 
-                    // Joints 2, 3, 4, 6 rotate on X
                     case 'ELBOW':
                     case 'WRIST1':
                     case 'WRIST2':
                     case 'TOOLFLANGE':
-                        x += angle; // Add the slider angle to the existing X rotation
+                        x += angle;
                         break;
                 }
                 
@@ -259,7 +186,8 @@
             const size = box.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
             const fov = camera.fov * (Math.PI / 180);
-            const cameraDistance = Math.abs(maxDim / Math.sin(fov / 2)) * 1.5;
+            // ✨ Reduced the distance multiplier from 1.5 to 1.0 to zoom in
+            const cameraDistance = Math.abs(maxDim / Math.sin(fov / 2)) * 1.0; 
             camera.position.set(center.x + cameraDistance, center.y + cameraDistance * 0.75, center.z + cameraDistance);
             camera.lookAt(center);
             controls.target.copy(center);
